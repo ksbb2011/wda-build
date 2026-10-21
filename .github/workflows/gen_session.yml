@@ -18,31 +18,28 @@ jobs:
 
       - name: Login, wait for 2FA code (poll pending_code.txt), fetch session
         run: |
-          set -e
           rm -f /tmp/in && mkfifo /tmp/in
+          exec 4<>/tmp/in
           fastlane spaceauth > /tmp/sa.log 2>&1 < /tmp/in &
           SPID=$!
 
-          # 1) 等 spaceauth 弹出“输入6位码”提示（说明 Apple 已向你设备推送验证码）
           for i in $(seq 1 60); do
             if grep -qi "6 digit code" /tmp/sa.log; then echo "PROMPT_OK"; break; fi
             sleep 3
           done
 
-          # 2) 轮询 pending_code.txt（最多 10 分钟），由 operator 把验证码写进去
           for i in $(seq 1 120); do
-            CODE=$(curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/pending_code.txt" | tr -d '[:space:]')
+            CODE=$(curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/pending_code.txt" | tr -d '[:space:]') || true
             if [ -n "$CODE" ]; then
               echo "CODE_RECEIVED len=${#CODE}"
-              exec 3>/tmp/in
-              echo "$CODE" >&3
-              exec 3>&-
+              echo "$CODE" >&4
               break
             fi
             sleep 5
           done
 
           wait $SPID || true
+          exec 4>&-
 
           echo "=====SA_LOG====="
           cat /tmp/sa.log
