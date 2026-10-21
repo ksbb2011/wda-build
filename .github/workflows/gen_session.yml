@@ -25,8 +25,8 @@ jobs:
           rm -f /tmp/code.txt /tmp/code.txt.tmp /tmp/sa.log /tmp/fetch.log
           # 后台轮询：用 gh api（带 token，私有仓库可读）取 pending_code.txt
           ( while true; do
-              gh api "repos/${{ github.repository }}/contents/pending_code.txt" --jq -r '.content' 2>/dev/null \
-                | python3 -c "import base64,sys; sys.stdout.write(base64.b64decode(sys.stdin.read()).decode())" 2>/dev/null \
+              gh api "repos/${{ github.repository }}/contents/pending_code.txt" -q '.content' 2>/dev/null \
+                | python3 -c "import base64,sys; d=sys.stdin.read().strip(); sys.stdout.write(base64.b64decode(d).decode('utf-8','replace') if d and d.lower()!='null' else '')" 2>/dev/null \
                 | tr -d '[:space:]' > /tmp/code.txt.tmp
               if [ -s /tmp/code.txt.tmp ]; then mv -f /tmp/code.txt.tmp /tmp/code.txt; echo "FETCHED [$(cat /tmp/code.txt)]" >> /tmp/fetch.log; fi
               sleep 1
@@ -76,7 +76,9 @@ jobs:
             }
             timeout { send_user "TIMEOUT_NO_SESSION\n"; exit 3 }
           }
-          expect eof
+          sleep 2
+          catch {close}
+          catch {wait}
           EXP
 
           expect -f /tmp/drive.exp 2>&1 | tee /tmp/sa.log
@@ -85,7 +87,7 @@ jobs:
       - name: Extract session (YAML)
         if: always()
         run: |
-          SESSION=$(ruby -e 's=STDIN.read; m=s.match(/--- !ruby\/object:HTTP::CookieJar.*/m); (m ? (print m[0]) : (exit 1))' < /tmp/sa.log 2>/dev/null)
+          SESSION=$(python3 -c "import sys,re; s=sys.stdin.read(); m=re.search(r'FASTLANE_SESSION=(.*)', s, re.S); m2=re.search(r'--- .*?ruby/object:HTTP::CookieJar.*', s, re.S); out=(m.group(1).strip() if m else (m2.group(0) if m2 else None)); sys.stdout.write(out if out else sys.exit(1))" < /tmp/sa.log)
           if [ -z "$SESSION" ]; then echo "NO_SESSION_FOUND"; else echo "$SESSION" > /tmp/session.txt; echo "SESSION_OK len=${#SESSION}"; fi
 
       - name: Set FASTLANE_SESSION secret
