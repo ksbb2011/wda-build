@@ -22,14 +22,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          rm -f /tmp/code.txt /tmp/code.txt.tmp
+          rm -f /tmp/code.txt /tmp/code.txt.tmp /tmp/sa.log
           # 后台轮询：用 gh api（带 token，私有仓库可读）取 pending_code.txt
           ( while true; do
               gh api "repos/${{ github.repository }}/contents/pending_code.txt" --jq -r '.content' 2>/dev/null \
                 | python3 -c "import base64,sys; sys.stdout.write(base64.b64decode(sys.stdin.read()).decode())" 2>/dev/null \
                 | tr -d '[:space:]' > /tmp/code.txt.tmp
               if [ -s /tmp/code.txt.tmp ]; then mv -f /tmp/code.txt.tmp /tmp/code.txt; fi
-              sleep 3
+              sleep 2
             done ) &
           FETCHER=$!
 
@@ -50,11 +50,11 @@ jobs:
               set data [string trim $data]
               if { $data ne "" } { set code $data }
             }
-            if { $code eq "" } { sleep 3 }
+            if { $code eq "" } { sleep 2 }
           }
           send "$code\r"
           expect {
-            -re "copy it verbatim" { }
+            -re "FASTLANE_SESSION" { }
             timeout { puts "TIMEOUT_NO_SESSION"; exit 3 }
           }
           expect eof
@@ -63,11 +63,29 @@ jobs:
           expect -f /tmp/drive.exp 2>&1 | tee /tmp/sa.log
           kill $FETCHER 2>/dev/null || true
 
-      - name: Extract session
+      - name: Extract session (YAML)
         if: always()
         run: |
-          SESSION=$(ruby -rjson -e 's=STDIN.read; i=s.index("copy it verbatim:"); exit(1) unless i; seg=s[i..]; a=seg.index("{"); b=seg.rindex("}"); json=seg[a..b]; JSON.parse(json); print json' < /tmp/sa.log 2>/dev/null)
+          SESSION=$(ruby -e 's=STDIN.read; m=s.match(/--- !ruby\/object:HTTP::CookieJar.*/m); (m ? (print m[0]) : (exit 1))' < /tmp/sa.log 2>/dev/null)
           if [ -z "$SESSION" ]; then echo "NO_SESSION_FOUND"; else echo "$SESSION" > /tmp/session.txt; echo "SESSION_OK len=${#SESSION}"; fi
+
+      - name: Set FASTLANE_SESSION secret
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SESSION=$(cat /tmp/session.txt 2>/dev/null)
+          if [ -z "$SESSION" ]; then echo "NO_SESSION"; exit 0; fi
+          gh secret set FASTLANE_SESSION -b "$SESSION"
+          echo "SECRET_SET"
+
+      - name: Trigger build_wda
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run build_wda.yml -f bundle_id=com.ksbb.wdarunner
+          echo "BUILD_DISPATCHED"
 
       - name: Print session for operator
         if: always()
