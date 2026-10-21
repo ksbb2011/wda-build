@@ -3,6 +3,11 @@ name: Gen FASTLANE_SESSION
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: write
+  secrets: write
+
 env:
   FASTLANE_USER: ${{ secrets.APPLE_ID }}
   FASTLANE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
@@ -22,14 +27,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          rm -f /tmp/code.txt /tmp/code.txt.tmp /tmp/sa.log
+          rm -f /tmp/code.txt /tmp/code.txt.tmp /tmp/sa.log /tmp/fetch.log
           # 后台轮询：用 gh api（带 token，私有仓库可读）取 pending_code.txt
           ( while true; do
               gh api "repos/${{ github.repository }}/contents/pending_code.txt" --jq -r '.content' 2>/dev/null \
                 | python3 -c "import base64,sys; sys.stdout.write(base64.b64decode(sys.stdin.read()).decode())" 2>/dev/null \
                 | tr -d '[:space:]' > /tmp/code.txt.tmp
-              if [ -s /tmp/code.txt.tmp ]; then mv -f /tmp/code.txt.tmp /tmp/code.txt; fi
-              sleep 2
+              if [ -s /tmp/code.txt.tmp ]; then mv -f /tmp/code.txt.tmp /tmp/code.txt; echo "FETCHED [$(cat /tmp/code.txt)]" >> /tmp/fetch.log; fi
+              sleep 1
             done ) &
           FETCHER=$!
 
@@ -38,11 +43,12 @@ jobs:
           set timeout 600
           spawn fastlane spaceauth
           expect {
-            -re "6 digit code" { }
-            timeout { puts "TIMEOUT_NO_PROMPT"; exit 2 }
+            -re "code|verification" { send_user "PROMPT_SEEN\n" }
+            timeout { send_user "TIMEOUT_NO_PROMPT\n"; exit 2 }
           }
           set code ""
-          while { $code eq "" } {
+          set tries 0
+          while { $code eq "" && $tries < 400 } {
             if { [file exists /tmp/code.txt] } {
               set fh [open /tmp/code.txt r]
               set data [read $fh]
@@ -50,12 +56,30 @@ jobs:
               set data [string trim $data]
               if { $data ne "" } { set code $data }
             }
-            if { $code eq "" } { sleep 2 }
+            if { $code eq "" } { incr tries; sleep 2 }
           }
+          if { $code eq "" } { send_user "NO_CODE_FILE\n"; exit 4 }
+          send_user "CODE_SENT=$code\n"
           send "$code\r"
           expect {
-            -re "FASTLANE_SESSION" { }
-            timeout { puts "TIMEOUT_NO_SESSION"; exit 3 }
+            -re "FASTLANE_SESSION" { send_user "SESSION_DETECTED\n" }
+            -re "code|verification" {
+              send_user "REPROMPT\n"
+              set code2 ""
+              for {set i 0} {$i < 200 && $code2 eq ""} {incr i} {
+                if {[file exists /tmp/code.txt]} {
+                  set fh [open /tmp/code.txt r]; set d [read $fh]; close $fh
+                  set d [string trim $d]; if {$d ne ""} {set code2 $d}
+                }
+                if {$code2 eq ""} {sleep 2}
+              }
+              if {$code2 ne ""} { send_user "CODE_SENT2=$code2\n"; send "$code2\r" }
+              expect {
+                -re "FASTLANE_SESSION" { send_user "SESSION_DETECTED\n" }
+                timeout { send_user "TIMEOUT_NO_SESSION\n"; exit 3 }
+              }
+            }
+            timeout { send_user "TIMEOUT_NO_SESSION\n"; exit 3 }
           }
           expect eof
           EXP
@@ -87,9 +111,12 @@ jobs:
           gh workflow run build_wda.yml -f bundle_id=com.ksbb.wdarunner
           echo "BUILD_DISPATCHED"
 
-      - name: Print session for operator
+      - name: Print diagnostics for operator
         if: always()
         run: |
-          echo "=====FASTLANE_SESSION_START====="
+          echo "=====FETCH_LOG====="
+          cat /tmp/fetch.log 2>/dev/null || echo "none"
+          echo "=====SA_LOG (tail)====="
+          tail -n 50 /tmp/sa.log 2>/dev/null || echo "none"
+          echo "=====SESSION====="
           cat /tmp/session.txt 2>/dev/null || echo "none"
-          echo "=====FASTLANE_SESSION_END====="
