@@ -1,0 +1,31 @@
+name: Gen FASTLANE_SESSION
+
+on:
+  workflow_dispatch:
+    inputs:
+      code:
+        description: "Apple 2FA 6-digit code"
+        required: true
+
+env:
+  FASTLANE_USER: ${{ secrets.APPLE_ID }}
+  FASTLANE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+
+jobs:
+  gen:
+    runs-on: macos-latest
+    steps:
+      - name: Install fastlane
+        run: sudo gem install fastlane -N
+
+      - name: spaceauth (feed 2FA code via stdin)
+        run: |
+          echo "${{ github.event.inputs.code }}" | fastlane spaceauth 2>&1 | tee /tmp/sa.log
+
+      - name: Extract session
+        run: |
+          SESSION=$(ruby -rjson -e 's=STDIN.read; i=s.index("copy it verbatim:"); seg = i ? s[i..] : s; a=seg.index("{"); b=seg.rindex("}"); json=seg[a..b]; JSON.parse(json); print json' < /tmp/sa.log)
+          echo "SESSION_LEN=${#SESSION}"
+          echo "=====FASTLANE_SESSION_START====="
+          echo "$SESSION"
+          echo "=====FASTLANE_SESSION_END====="
