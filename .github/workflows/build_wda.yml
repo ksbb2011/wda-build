@@ -1,0 +1,78 @@
+# GitHub Actions: 用免费 Apple ID 在 macOS runner 编译 + 签名 WebDriverAgent，产出 WDA.ipa
+# Secrets（已在仓库里配置）：APPLE_ID / APPLE_ID_PASSWORD / TEAM_ID / UDID / FASTLANE_SESSION(2FA 时)
+# 触发：Actions 页 -> Build WDA -> Run workflow（bundle_id 默认 com.ksbb.wdarunner）
+# 产物：Artifact 里的 WDA.ipa，下载后在本机 `tidevice install WDA.ipa`
+
+name: Build WDA (free Apple ID)
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_id:
+        description: "WDA bundle id (必须唯一)"
+        required: true
+        default: "com.ksbb.wdarunner"
+
+env:
+  APPLE_ID: ${{ secrets.APPLE_ID }}
+  APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+  TEAM_ID: ${{ secrets.TEAM_ID }}
+  UDID: ${{ secrets.UDID }}
+  FASTLANE_SESSION: ${{ secrets.FASTLANE_SESSION }}
+  BUNDLE_ID: ${{ github.event.inputs.bundle_id }}
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install fastlane
+        run: sudo gem install fastlane -N
+
+      - name: Clone WebDriverAgent & 改 bundle id
+        run: |
+          git clone https://github.com/appium/WebDriverAgent.git
+          cd WebDriverAgent
+          ./Scripts/bootstrap.sh || true
+          # 免费账号不能用 com.facebook.* 的 bundle id，改成你自己的唯一值（Lib 和 Runner 两个都要改）
+          sed -i '' "s/com.facebook.WebDriverAgentLib/${BUNDLE_ID}lib/g" WebDriverAgent.xcodeproj/project.pbxproj
+          sed -i '' "s/com.facebook.WebDriverAgentRunner/${BUNDLE_ID}/g" WebDriverAgent.xcodeproj/project.pbxproj
+
+      - name: Create signing certificate (development)
+        run: fastlane cert --development --username "$APPLE_ID" --team_id "$TEAM_ID" --platform ios
+
+      - name: Register device
+        run: |
+          printf "%s\tiPhone-X\n" "$UDID" > devices.txt
+          fastlane run register_devices devices_file:devices.txt username:"$APPLE_ID" team_id:"$TEAM_ID" || true
+
+      - name: Create provisioning profiles (sigh)
+        run: |
+          fastlane sigh --development --app_identifier "${BUNDLE_ID}lib" --username "$APPLE_ID" --team_id "$TEAM_ID" --skip_install --force
+          fastlane sigh --development --app_identifier "$BUNDLE_ID" --username "$APPLE_ID" --team_id "$TEAM_ID" --skip_install --force
+
+      - name: Build & sign WDA
+        run: |
+          xcodebuild -project WebDriverAgent/WebDriverAgent.xcodeproj \
+            -scheme WebDriverAgentRunner -configuration Debug \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath WebDriverAgent/build \
+            CODE_SIGN_STYLE=Automatic \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            -allowProvisioningUpdates
+
+      - name: Package .app -> WDA.ipa
+        run: |
+          APP=$(find WebDriverAgent/build -name 'WebDriverAgentRunner-Runner.app' -type d | head -1)
+          if [ -z "$APP" ]; then echo "BUILD FAILED"; find WebDriverAgent/build -name '*.app'; exit 1; fi
+          rm -rf Payload && mkdir Payload
+          cp -r "$APP" Payload/
+          zip -r WDA.ipa Payload
+          ls -la WDA.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: WDA.ipa
+          path: WDA.ipa
