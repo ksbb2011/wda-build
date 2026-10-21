@@ -57,7 +57,8 @@ jobs:
           send_user "CODE_SENT=$code\n"
           send "$code\r"
           expect {
-            -re "FASTLANE_SESSION" { send_user "SESSION_DETECTED\n" }
+            -re "FASTLANE_SESSION=" { send_user "SESSION_DETECTED\n" }
+            -re "Could not login|UnauthorizedAccess|expired|incorrect|Invalid" { send_user "LOGIN_FAILED\n"; exit 3 }
             -re "code|verification" {
               send_user "REPROMPT\n"
               set code2 ""
@@ -70,7 +71,8 @@ jobs:
               }
               if {$code2 ne ""} { send_user "CODE_SENT2=$code2\n"; send "$code2\r" }
               expect {
-                -re "FASTLANE_SESSION" { send_user "SESSION_DETECTED\n" }
+                -re "FASTLANE_SESSION=" { send_user "SESSION_DETECTED\n" }
+                -re "Could not login|UnauthorizedAccess|expired|incorrect|Invalid" { send_user "LOGIN_FAILED\n"; exit 3 }
                 timeout { send_user "TIMEOUT_NO_SESSION\n"; exit 3 }
               }
             }
