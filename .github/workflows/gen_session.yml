@@ -6,7 +6,6 @@ on:
 permissions:
   contents: read
   actions: write
-  secrets: write
 
 env:
   FASTLANE_USER: ${{ secrets.APPLE_ID }}
