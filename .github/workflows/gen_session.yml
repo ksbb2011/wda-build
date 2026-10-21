@@ -3,8 +3,6 @@ name: Gen FASTLANE_SESSION
 on:
   workflow_dispatch:
 
-permissions: write-all
-
 env:
   FASTLANE_USER: ${{ secrets.APPLE_ID }}
   FASTLANE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
