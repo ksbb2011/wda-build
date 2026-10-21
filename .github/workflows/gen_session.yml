@@ -3,9 +3,7 @@ name: Gen FASTLANE_SESSION
 on:
   workflow_dispatch:
 
-permissions:
-  contents: read
-  actions: write
+permissions: write-all
 
 env:
   FASTLANE_USER: ${{ secrets.APPLE_ID }}
