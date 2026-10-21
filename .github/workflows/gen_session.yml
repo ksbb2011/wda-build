@@ -24,8 +24,12 @@ jobs:
 
       - name: Extract session
         run: |
-          SESSION=$(ruby -rjson -e 's=STDIN.read; i=s.index("copy it verbatim:"); seg = i ? s[i..] : s; a=seg.index("{"); b=seg.rindex("}"); json=seg[a..b]; JSON.parse(json); print json' < /tmp/sa.log)
-          echo "SESSION_LEN=${#SESSION}"
+          SESSION=$(ruby -rjson -e 's=STDIN.read; i=s.index("copy it verbatim:"); exit(1) unless i; seg=s[i..]; a=seg.index("{"); b=seg.rindex("}"); json=seg[a..b]; JSON.parse(json); print json' < /tmp/sa.log 2>/dev/null)
+          if [ -z "$SESSION" ]; then echo "NO_SESSION_FOUND"; echo "----- raw sa.log -----"; cat /tmp/sa.log; else echo "$SESSION" > /tmp/session.txt; echo "SESSION_OK len=${#SESSION}"; fi
+
+      - name: Print session for operator
+        if: always()
+        run: |
           echo "=====FASTLANE_SESSION_START====="
-          echo "$SESSION"
+          cat /tmp/session.txt 2>/dev/null || echo "none"
           echo "=====FASTLANE_SESSION_END====="
