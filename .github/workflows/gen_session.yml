@@ -2,10 +2,6 @@ name: Gen FASTLANE_SESSION
 
 on:
   workflow_dispatch:
-    inputs:
-      code:
-        description: "Apple 2FA 6-digit code"
-        required: true
 
 env:
   FASTLANE_USER: ${{ secrets.APPLE_ID }}
@@ -15,17 +11,48 @@ jobs:
   gen:
     runs-on: macos-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Install fastlane
         run: sudo gem install fastlane -N
 
-      - name: spaceauth (feed 2FA code via stdin)
+      - name: Login, wait for 2FA code (poll pending_code.txt), fetch session
         run: |
-          echo "${{ github.event.inputs.code }}" | fastlane spaceauth 2>&1 | tee /tmp/sa.log
+          set -e
+          rm -f /tmp/in && mkfifo /tmp/in
+          fastlane spaceauth > /tmp/sa.log 2>&1 < /tmp/in &
+          SPID=$!
+
+          # 1) 等 spaceauth 弹出“输入6位码”提示（说明 Apple 已向你设备推送验证码）
+          for i in $(seq 1 60); do
+            if grep -qi "6 digit code" /tmp/sa.log; then echo "PROMPT_OK"; break; fi
+            sleep 3
+          done
+
+          # 2) 轮询 pending_code.txt（最多 10 分钟），由 operator 把验证码写进去
+          for i in $(seq 1 120); do
+            CODE=$(curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/pending_code.txt" | tr -d '[:space:]')
+            if [ -n "$CODE" ]; then
+              echo "CODE_RECEIVED len=${#CODE}"
+              exec 3>/tmp/in
+              echo "$CODE" >&3
+              exec 3>&-
+              break
+            fi
+            sleep 5
+          done
+
+          wait $SPID || true
+
+          echo "=====SA_LOG====="
+          cat /tmp/sa.log
+          echo "=====END====="
 
       - name: Extract session
+        if: always()
         run: |
           SESSION=$(ruby -rjson -e 's=STDIN.read; i=s.index("copy it verbatim:"); exit(1) unless i; seg=s[i..]; a=seg.index("{"); b=seg.rindex("}"); json=seg[a..b]; JSON.parse(json); print json' < /tmp/sa.log 2>/dev/null)
-          if [ -z "$SESSION" ]; then echo "NO_SESSION_FOUND"; echo "----- raw sa.log -----"; cat /tmp/sa.log; else echo "$SESSION" > /tmp/session.txt; echo "SESSION_OK len=${#SESSION}"; fi
+          if [ -z "$SESSION" ]; then echo "NO_SESSION_FOUND"; else echo "$SESSION" > /tmp/session.txt; echo "SESSION_OK len=${#SESSION}"; fi
 
       - name: Print session for operator
         if: always()
