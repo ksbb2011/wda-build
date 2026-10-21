@@ -13,37 +13,55 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install fastlane
-        run: sudo gem install fastlane -N
-
-      - name: Login, wait for 2FA code (poll pending_code.txt), fetch session
+      - name: Install fastlane + expect
         run: |
-          rm -f /tmp/in && mkfifo /tmp/in
-          exec 4<>/tmp/in
-          fastlane spaceauth > /tmp/sa.log 2>&1 < /tmp/in &
-          SPID=$!
+          sudo gem install fastlane -N
+          brew install expect
 
-          for i in $(seq 1 60); do
-            if grep -qi "6 digit code" /tmp/sa.log; then echo "PROMPT_OK"; break; fi
-            sleep 3
-          done
+      - name: Generate session (expect-driven 2FA)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rm -f /tmp/code.txt /tmp/code.txt.tmp
+          # 后台轮询：用 gh api（带 token，私有仓库可读）取 pending_code.txt
+          ( while true; do
+              gh api "repos/${{ github.repository }}/contents/pending_code.txt" --jq -r '.content' 2>/dev/null \
+                | python3 -c "import base64,sys; sys.stdout.write(base64.b64decode(sys.stdin.read()).decode())" 2>/dev/null \
+                | tr -d '[:space:]' > /tmp/code.txt.tmp
+              if [ -s /tmp/code.txt.tmp ]; then mv -f /tmp/code.txt.tmp /tmp/code.txt; fi
+              sleep 3
+            done ) &
+          FETCHER=$!
 
-          for i in $(seq 1 120); do
-            CODE=$(curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/pending_code.txt" | tr -d '[:space:]') || true
-            if [ -n "$CODE" ]; then
-              echo "CODE_RECEIVED len=${#CODE}"
-              echo "$CODE" >&4
-              break
-            fi
-            sleep 5
-          done
+          cat > /tmp/drive.exp <<'EXP'
+          #!/usr/bin/expect -f
+          set timeout 600
+          spawn fastlane spaceauth
+          expect {
+            -re "6 digit code" { }
+            timeout { puts "TIMEOUT_NO_PROMPT"; exit 2 }
+          }
+          set code ""
+          while { $code eq "" } {
+            if { [file exists /tmp/code.txt] } {
+              set fh [open /tmp/code.txt r]
+              set data [read $fh]
+              close $fh
+              set data [string trim $data]
+              if { $data ne "" } { set code $data }
+            }
+            if { $code eq "" } { sleep 3 }
+          }
+          send "$code\r"
+          expect {
+            -re "copy it verbatim" { }
+            timeout { puts "TIMEOUT_NO_SESSION"; exit 3 }
+          }
+          expect eof
+          EXP
 
-          wait $SPID || true
-          exec 4>&-
-
-          echo "=====SA_LOG====="
-          cat /tmp/sa.log
-          echo "=====END====="
+          expect -f /tmp/drive.exp 2>&1 | tee /tmp/sa.log
+          kill $FETCHER 2>/dev/null || true
 
       - name: Extract session
         if: always()
