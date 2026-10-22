@@ -28,9 +28,6 @@ jobs:
           ./Scripts/bootstrap.sh -d || true
           sed -i '' "s/com.facebook.WebDriverAgentLib/${BUNDLE_ID}lib/g" WebDriverAgent.xcodeproj/project.pbxproj
           sed -i '' "s/com.facebook.WebDriverAgentRunner/${BUNDLE_ID}/g" WebDriverAgent.xcodeproj/project.pbxproj
-          # 统一改为自动签名风格（后面整体免签）
-          sed -i '' 's/CODE_SIGN_STYLE = Manual/CODE_SIGN_STYLE = Automatic/g' WebDriverAgent.xcodeproj/project.pbxproj
-          sed -i '' 's/DEVELOPMENT_TEAM = [A-Z0-9]*/DEVELOPMENT_TEAM = ""/g' WebDriverAgent.xcodeproj/project.pbxproj
 
       - name: Build WDA (unsigned)
         run: |
