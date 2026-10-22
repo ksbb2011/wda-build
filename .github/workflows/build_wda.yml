@@ -1,8 +1,8 @@
-name: Build WDA (free Apple ID)
+name: Build WDA (unsigned for Sideloadly)
 
-# 免费账号方案：不用 fastlane cert/sigh（那些要付费团队），改用 Xcode 自动签名 + 免费 Personal Team。
-# 前提：本 Apple ID 已在本机 Mac 上「用于开发」登记过目标设备 UDID（一次性，见说明）。
-# CI 用 GitHub 免费 macOS runner 上的最新 Xcode 编译并免费签名，产出 WDA.ipa。
+# 方案：CI 只负责编译「免签名」的 WDA.ipa（GitHub 免费 macOS runner）。
+# 设备登记 + 签名 + 安装全部由 Windows 上的 Sideloadly 完成（免费 Apple ID，7 天有效，过期重签即可）。
+# 这样绕开「CI 免费签名必须先登记设备」的死循环：Sideloadly 签名时自动登记设备。
 
 on:
   workflow_dispatch:
@@ -13,9 +13,6 @@ on:
         default: "com.ksbb.wdarunner"
 
 env:
-  APPLE_ID: ${{ secrets.APPLE_ID }}
-  APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-  UDID: ${{ secrets.UDID }}
   BUNDLE_ID: ${{ github.event.inputs.bundle_id }}
 
 jobs:
@@ -31,34 +28,18 @@ jobs:
           ./Scripts/bootstrap.sh -d || true
           sed -i '' "s/com.facebook.WebDriverAgentLib/${BUNDLE_ID}lib/g" WebDriverAgent.xcodeproj/project.pbxproj
           sed -i '' "s/com.facebook.WebDriverAgentRunner/${BUNDLE_ID}/g" WebDriverAgent.xcodeproj/project.pbxproj
-          # 强制自动签名，清掉工程里写死的 team
+          # 统一改为自动签名风格（后面整体免签）
           sed -i '' 's/CODE_SIGN_STYLE = Manual/CODE_SIGN_STYLE = Automatic/g' WebDriverAgent.xcodeproj/project.pbxproj
           sed -i '' 's/DEVELOPMENT_TEAM = [A-Z0-9]*/DEVELOPMENT_TEAM = ""/g' WebDriverAgent.xcodeproj/project.pbxproj
 
-      - name: Add Apple ID to Xcode (free Personal Team)
-        run: |
-          # 把 Apple ID 凭据写入 keychain，Xcode 自动签名时会用它登录并创建免费开发证书/描述文件
-          security add-generic-password -a "$APPLE_ID" -s "com.apple.dt.Xcode" \
-            -w "$APPLE_ID_PASSWORD" -T /usr/bin/security -T /usr/bin/codesign -T /usr/bin/xcodebuild \
-            2>/dev/null || security add-generic-password -a "$APPLE_ID" -s "com.apple.dt.Xcode" \
-            -w "$APPLE_ID_PASSWORD" -T /usr/bin/security -T /usr/bin/codesign -T /usr/bin/xcodebuild -U
-          /usr/libexec/PlistBuddy -c "Add :IDEProvisioningTeams dict" \
-            ~/Library/Preferences/com.apple.dt.Xcode.plist 2>/dev/null || true
-          /usr/libexec/PlistBuddy -c "Add :IDEProvisioningTeams:$APPLE_ID dict" \
-            ~/Library/Preferences/com.apple.dt.Xcode.plist 2>/dev/null || true
-          echo "keychain Xcode accounts:"; security find-generic-password -s com.apple.dt.Xcode 2>/dev/null | grep -c acct || true
-
-      - name: Build & sign WDA (Xcode 自动签名 / Personal Team)
+      - name: Build WDA (unsigned)
         run: |
           xcodebuild -project WebDriverAgent/WebDriverAgent.xcodeproj \
             -scheme WebDriverAgentRunner -configuration Debug \
             -destination 'generic/platform=iOS' \
             -derivedDataPath WebDriverAgent/build \
-            CODE_SIGN_STYLE=Automatic \
-            -allowProvisioningUpdates \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
             build
-        env:
-          CI: "true"
 
       - name: Package .app -> WDA.ipa
         run: |
@@ -72,5 +53,5 @@ jobs:
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: WDA.ipa
+          name: WDA-unsigned
           path: WDA.ipa
