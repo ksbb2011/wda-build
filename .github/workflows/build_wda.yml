@@ -42,6 +42,8 @@ jobs:
         run: |
           APP=$(find WebDriverAgent/build -name 'WebDriverAgentRunner-Runner.app' -type d | head -1)
           if [ -z "$APP" ]; then echo "BUILD FAILED"; find WebDriverAgent/build -name '*.app'; exit 1; fi
+          # 剔除 dSYM 调试符号（Sideloadly 给它签名会报 macho sign/edit failed -40，且运行用不到）
+          find "$APP" -name '*.dSYM' -type d -exec rm -rf {} + 2>/dev/null || true
           rm -rf Payload && mkdir Payload
           cp -r "$APP" Payload/
           zip -r WDA.ipa Payload
