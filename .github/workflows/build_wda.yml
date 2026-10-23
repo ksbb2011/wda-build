@@ -17,9 +17,19 @@ env:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+
+      - name: Select Xcode 15.x (iOS 16.7 compatible Testing.framework)
+        # Xcode 16+ 嵌入的 Testing.framework 依赖 lib_TestingInterop.dylib，
+        # 该库只在 iOS17+ 的 dyld 缓存里存在，iOS16.7 启动即 DYLD 崩溃。
+        # Xcode 15.x 编出的 Testing.framework 不含此依赖，可原生跑在 iOS16.7。
+        run: |
+          XC=$(ls -d /Applications/Xcode_15*.app 2>/dev/null | head -1)
+          if [ -z "$XC" ]; then echo "Xcode 15 not found; available Xcodes:"; ls /Applications | grep -i xcode; exit 1; fi
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
 
       - name: Clone WebDriverAgent & change bundle id
         run: |
